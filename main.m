@@ -78,11 +78,6 @@ fprintf('开始在线滚动优化仿真...\n');
 
 for t_start = 1 : Env.Ntotal : Total_Sim_Slots
 
-    if t_start == 121 % 比如在第 2 个窗口开始时
-    disp('【调试】在优化前强行注入大误差！');
-    X_real{3} = [50; 0]; % 给流 3 一个巨大的位置偏差
-    end
-    
     P_perf_perms = perms((N + 1) : (N + Control_N));
     best_P_perf = [];
     min_J = Inf;
@@ -91,7 +86,7 @@ for t_start = 1 : Env.Ntotal : Total_Sim_Slots
     for p_idx = 1 : size(P_perf_perms, 1)
         current_P_try = P_perf_perms(p_idx, :);
         
-        [sv_seq_pred] = predict_Tc_delays(t_start, offline_P, current_P_try, offline_T_is, offline_E, Env);
+        [sv_seq_pred] = predict_Tc_delays(t_start, offline_P, offline_T_is, offline_E, current_P_try, Env);
         
         % 预测控制性能
         current_J_total = 0;
@@ -103,9 +98,9 @@ for t_start = 1 : Env.Ntotal : Total_Sim_Slots
                 dk = sv_seq_pred{i}(k_step);
                 
                 if dk <= Env.T_i(i)
-                    mat_idx = max(1, dk); 
+                    mat_idx = max(1, dk);
                 else
-                    mat_idx = Env.T_i(i) + 1; 
+                    mat_idx = Env.T_i(i) + 1;
                 end
                 
                 A_cl = Env.CM_data{i}{mat_idx};
@@ -114,14 +109,6 @@ for t_start = 1 : Env.Ntotal : Total_Sim_Slots
                 x_temp = z_next(1:size(X_real{i}, 1));
 
                 current_J_total = current_J_total + Env.T_i(i) * (x_temp' * Q_weight * x_temp) + Env.Route_hop(i) * Lambda_delay * dk;
-                % 在计算完 current_J_total 后
-                if p_idx == 1 || p_idx == size(P_perf_perms, 1) % 只看第一个和最后一个组合
-                    fprintf('组合 %d: 流3优先级 %d, 预测时延序列(前3个) = [%s], 代价 J = %.4f\n', ...
-                        p_idx, ...
-                        find(current_P_try == 3), ... % 假设流3是受害流
-                        num2str(sv_seq_pred{3}(1:3)), ...
-                        current_J_total);
-                end
 
                 u_old = K{i} * x_temp; 
             end
@@ -138,7 +125,7 @@ for t_start = 1 : Env.Ntotal : Total_Sim_Slots
     History_Priority_Matrix = [History_Priority_Matrix; best_P_perf];% 最优优先级变更图
 
     % 执行
-    [sv_seq_real] = predict_Tc_delays(t_start, offline_P, best_P_perf, offline_T_is, offline_E, Env);
+    [sv_seq_real] = predict_Tc_delays(t_start, offline_P, offline_T_is, offline_E, best_P_perf, Env);
     
     for i = Control_Idx
         History_Delay{i} = [History_Delay{i}, sv_seq_real{i}];
@@ -154,14 +141,6 @@ for t_start = 1 : Env.Ntotal : Total_Sim_Slots
             % 下一步的状态取出来
             x_next_temp = z_next_real(1:size(X_real{i},1)); 
             
-            % 给流在某些时间窗口内增加脉冲干扰（先预测再脉冲，可能导致下一个滚动窗口的状态下降已经被抵消了
-            if (t_start == 50 * Env.Ntotal + 1 && i == (3) && k_r ==1) || (t_start == 30 * Env.Ntotal + 1 && i == (5) && k_r ==1)
-                % 给第一维加 10 的偏差
-                x_next_temp(1) = x_next_temp(1) + 10; 
-
-                disp([' 流 ', num2str(i), ' 加入脉冲干扰']);
-            end
-            
             % 把状态赋值给 X_real
             X_real{i} = x_next_temp;
             U_last(i) = K{i} * X_real{i}; % 真实物理指令更新
@@ -169,7 +148,7 @@ for t_start = 1 : Env.Ntotal : Total_Sim_Slots
             History_X{i} = [History_X{i}, X_real{i}];
         end
     end
-    disp(['时间', num2str((t_start-1) * 0.01), ' s: ', num2str(best_P_perf)]);
+    disp(['时间', num2str((t_start-1) * 0.01,'%.2f'), 's : ', num2str(best_P_perf)]);
 end
 
 %% 绘图阶段
@@ -182,12 +161,13 @@ figure('Name', '状态收敛轨迹', 'Color', 'w', 'Position', [100, 100, 800, 6
 for i = Control_Start_Idx : Control_End_Idx
     idx_plot = i - Env.Non_control_N;
     subplot(2, 2, idx_plot);
-
+    
     % 获取该流的历史轨迹
     traj = History_X{i}'; 
+    k = 0:length(traj)-1;
 
     % 绘制所有状态维度
-    plot(traj, 'LineWidth', 1.5); 
+    plot(k, traj, 'LineWidth', 1.5); 
     grid on;
 
     title(['Loop ', num2str(i-2)]);
@@ -275,56 +255,56 @@ sgtitle('State Trajectories');
 % box on;     % 给整个图加个外框
 % set(gca, 'LineWidth', 1.5); % 坐标轴框线加粗
 
-% % 5: 特定时间窗口内的逐包时延
-% View_Start_Time_Sec = 20.0;
-% View_End_Time_Sec   = 40.0;
-% 
-% Slot_Duration_Sec = PHY_SLOT_DURATION_MS / 1000;
-% View_Start_Slot = round(View_Start_Time_Sec / Slot_Duration_Sec);
-% View_End_Slot   = round(View_End_Time_Sec   / Slot_Duration_Sec);
-% 
-% figure('Name', '特定窗口逐包时延', 'Color', 'w', 'Position', [100, 100, 1000, 600]);
-% 
-% Control_Start_Idx = Env.Non_control_N + 1;
-% Control_End_Idx = Env.N;
-% 
-% for i = Control_Start_Idx : Control_End_Idx
-% 
-%     % 准备数据
-%     all_delays = History_Delay{i}; 
-%     packet_indices = 0 : length(all_delays) - 1;
-%     send_times = packet_indices * Env.T_i(i);
-% 
-%     % 筛选
-%     valid_idx = find(send_times >= View_Start_Slot & send_times <= View_End_Slot);
-% 
-%     if isempty(valid_idx)
-%         continue; 
-%     end
-% 
-%     window_send_times = send_times(valid_idx);
-%     window_delays = all_delays(valid_idx);
-% 
-%     % 绘制子图
-%     idx_plot = i - Env.Non_control_N;
-%     subplot(2, 2, idx_plot);
-% 
-%     % 这里可以把 X 轴也转换成秒，让图表更易读
-%     stem(window_send_times * Slot_Duration_Sec, window_delays, 'filled', 'LineWidth', 1.5, 'MarkerSize', 4);
-% 
-%     hold on;
-%     yline(Env.T_i(i), 'r--', 'LineWidth', 1.5, 'Label', 'Deadline');
-% 
-%     grid on;
-%     title(['Loop ', num2str(idx_plot), ' (Period = ', num2str(Env.T_i(i)*Slot_Duration_Sec), 's)']);
-% 
-%     % 修改 X 轴标签为
-%     xlabel('仿真时间 (Seconds)'); 
-%     ylabel('实际延迟 (Slots)');
-% 
-%     % 锁定 X 轴范围 (使用秒)
-%     xlim([View_Start_Time_Sec, View_End_Time_Sec]); 
-%     ylim([0, max(Env.T_i(i) * 1.5, max(window_delays) + 2)]); 
-% end
-% 
-% sgtitle(['Packet Delays: ', num2str(View_Start_Time_Sec), 's - ', num2str(View_End_Time_Sec), 's']);
+% 5: 特定时间窗口内的逐包时延
+View_Start_Time_Sec = 0.0;
+View_End_Time_Sec   = 12;
+
+Slot_Duration_Sec = PHY_SLOT_DURATION_MS / 1000;
+View_Start_Slot = round(View_Start_Time_Sec / Slot_Duration_Sec);
+View_End_Slot   = round(View_End_Time_Sec   / Slot_Duration_Sec);
+
+figure('Name', '特定窗口逐包时延', 'Color', 'w', 'Position', [100, 100, 1000, 600]);
+
+Control_Start_Idx = Env.Non_control_N + 1;
+Control_End_Idx = Env.N;
+
+for i = Control_Start_Idx : Control_End_Idx
+
+    % 准备数据
+    all_delays = History_Delay{i}; 
+    packet_indices = 0 : length(all_delays) - 1;
+    send_times = packet_indices * Env.T_i(i);
+
+    % 筛选
+    valid_idx = find(send_times >= View_Start_Slot & send_times <= View_End_Slot);
+
+    if isempty(valid_idx)
+        continue; 
+    end
+
+    window_send_times = send_times(valid_idx);
+    window_delays = all_delays(valid_idx);
+
+    % 绘制子图
+    idx_plot = i - Env.Non_control_N;
+    subplot(2, 2, idx_plot);
+
+    % 这里可以把 X 轴也转换成秒，让图表更易读
+    stem(window_send_times * Slot_Duration_Sec, window_delays, 'filled', 'LineWidth', 1.5, 'MarkerSize', 4);
+
+    hold on;
+    yline(Env.T_i(i), 'r--', 'LineWidth', 1.5, 'Label', 'Deadline');
+
+    grid on;
+    title(['Loop ', num2str(idx_plot), ' (Period = ', num2str(Env.T_i(i)*Slot_Duration_Sec), 's)']);
+
+    % 修改 X 轴标签为
+    xlabel('仿真时间 (Seconds)'); 
+    ylabel('实际延迟 (Slots)');
+
+    % 锁定 X 轴范围 (使用秒)
+    xlim([View_Start_Time_Sec, View_End_Time_Sec]); 
+    ylim([0, max(Env.T_i(i) * 1.5, max(window_delays) + 2)]); 
+end
+
+sgtitle(['Packet Delays: ', num2str(View_Start_Time_Sec), 's - ', num2str(View_End_Time_Sec), 's']);

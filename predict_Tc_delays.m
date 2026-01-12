@@ -1,9 +1,7 @@
-function [sv_seq] = predict_Tc_delays(t_start, offline_P, P_perf, offline_T_is, offline_E, Env)
-    % 输入：当前起始时间, 离线优先级, 尝试的性能流优先级, 离线周期倍数, 离线偏移, 环境结构体
-    
+function [sv_seq] = predict_Tc_delays(t_start, offline_P, offline_T_is, offline_E,P_perf, Env)
+    % 输入：当前起始时间, 离线优先级, 离线周期倍数, 离线偏移, 性能流优先级, 环境结构体
     During_total = Env.Ntotal;
     sv_seq = cell(1, Env.N);
-    instance_count = zeros(1, Env.N); 
     
     % 状态变量初始化
     dur_countv = zeros(1, Env.N);
@@ -30,30 +28,43 @@ function [sv_seq] = predict_Tc_delays(t_start, offline_P, P_perf, offline_T_is, 
             
             % 任务释放逻辑
             for iloop = 1:Env.N
+                % 使用绝对时间 t_abs 判断是否是释放时刻
                 if mod(t_abs - 1 - offline_E(iloop), Env.T_i(iloop)) == 0
-                    % 记录上一实例结果
+                    
+                    % 记录上一个实例的结果
                     if ~is_first_release(iloop)
                         if ~Superframe_success1v(iloop)
-                            sv_seq{iloop} = [sv_seq{iloop}, Env.T_i(iloop) + 1]; % 丢包延迟
+                            % 丢包记录
+                            sv_seq{iloop} = [sv_seq{iloop}, Env.T_i(iloop) + 1]; 
                         else
+                            % 成功延迟记录
                             sv_seq{iloop} = [sv_seq{iloop}, delay(iloop)];
                         end
                     end
-                    
                     is_first_release(iloop) = false;
-                    instance_count(iloop) = instance_count(iloop) + 1;
                     
-                    % 优先级切换逻辑
-                    % 判断本实例是稳定实例还是性能实例
-                    if mod(instance_count(iloop)-1, offline_T_is(iloop)) == 0
+                    global_instance_idx = floor((t_abs - 1 - offline_E(iloop)) / Env.T_i(iloop));
+                    
+                    % 优先级判断逻辑
+                    if iloop <= Env.Non_control_N
+                        % 非控制流 (1, 2)
+                        % 始终使用离线优先级
                         current_priority_active(iloop) = offline_P(iloop);
                     else
-                        % 性能实例使用决策变量中的优先级
-                        current_priority_active(iloop) = P_perf(iloop - Env.Non_control_N);
+                        % 判断是 稳定实例 还是 性能实例
+                        if mod(global_instance_idx, offline_T_is(iloop)) == floor(offline_E(iloop) / Env.T_i(iloop)) 
+                            % 稳定实例 必须使用离线分配的高优先级，保障稳定性
+                            current_priority_active(iloop) = offline_P(iloop);
+                        else
+                            % 性能实例 使用当前在线优化尝试的优先级 (P_perf)
+                            perf_idx = iloop - Env.Non_control_N;
+                            current_priority_active(iloop) = P_perf(perf_idx);
+                        end
                     end
                     
+                    % 重置流的状态
                     Superframe_success1v(iloop) = 0;
-                    Route_dyn{iloop} = Env.Route{iloop}; % 路由加载
+                    Route_dyn{iloop} = Env.Route{iloop}; 
                     dur_countv(iloop) = Env.T_i(iloop); 
                     hop_remain(iloop) = Env.Route_hop(iloop);
                     hop_counterv(iloop) = 0;
