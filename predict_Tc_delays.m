@@ -1,11 +1,10 @@
-function [sv_seq, Next_NetState, Schedule_Log] = Simulate(t_start, offline_P, offline_T_is, offline_E, P_perf, Env, Prev_NetState)
+function [sv_seq, Next_NetState, Schedule_Log] = predict_Tc_delays(t_start, offline_P, offline_T_is, offline_E, P_perf, Env, Prev_NetState)
     % 输入：当前起始时间, 离线优先级, 离线周期倍数, 离线偏移, 性能流优先级, 环境结构体
     During_total = Env.Ntotal;
     sv_seq = cell(1, Env.N);
     num_frames = ceil(During_total / Env.slot_num); 
     counterv_local = 0;
     Schedule_Log = [];
-
     % 状态变量初始化
     if nargin >= 7 && ~isempty(Prev_NetState)
         % 如果传入了上一个窗口的状态，直接继承
@@ -17,6 +16,7 @@ function [sv_seq, Next_NetState, Schedule_Log] = Simulate(t_start, offline_P, of
         Route_dyn = Prev_NetState.Route_dyn;
         delay = zeros(1, Env.N); 
         current_priority_active = Prev_NetState.current_priority_active;
+        release_time = Prev_NetState.release_time;
     else
         % 如果是第一次运行，全零初始化
         dur_countv = zeros(1, Env.N);
@@ -27,6 +27,7 @@ function [sv_seq, Next_NetState, Schedule_Log] = Simulate(t_start, offline_P, of
         hop_counterv = zeros(1, Env.N);
         Route_dyn = cell(1, Env.N);
         current_priority_active = zeros(1, Env.N);
+        release_time = nan(1, Env.N);
     end
     
     for frame_idx = 1 : num_frames
@@ -42,8 +43,18 @@ function [sv_seq, Next_NetState, Schedule_Log] = Simulate(t_start, offline_P, of
             % 任务释放逻辑
             for iloop = 1:Env.N
                 if mod(t_abs - 1 - offline_E(iloop), Env.T_i(iloop)) == 0
+                    release_time(iloop) = t_abs;
                     if ~is_first_release(iloop)
                         if ~Superframe_success1v(iloop)
+                            % 失败发生的“判定时刻”是当前release时刻 t_abs
+                        delay_true_fail = t_abs - release_time(iloop);
+                
+                        % 你写入的是 Ti+1（代表miss），这里检查：失败判定时刻是否已经 > Ti（按你的语义）
+                        if delay_true_fail <= Env.T_i(iloop)
+                            fprintf('[CHECK-FAIL] flow=%d, t_rel=%d, t_fail_mark=%d, delay_true_fail=%d <= Ti=%d (maybe fail marked too early)\n', ...
+                                iloop, release_time(iloop), t_abs, delay_true_fail, Env.T_i(iloop));
+                        end
+
                             sv_seq{iloop} = [sv_seq{iloop}, Env.T_i(iloop) + 1]; 
                         end
                     end
@@ -60,8 +71,8 @@ function [sv_seq, Next_NetState, Schedule_Log] = Simulate(t_start, offline_P, of
                         else
                             perf_idx = iloop - Env.Non_control_N;
                             current_priority_active(iloop) = P_perf(perf_idx); % 性能实例
-                            % dur_countv(iloop) = 0; 
-                            % Superframe_success1v(iloop) = 1; %% 假装已经成功了（丢掉所有性能流（调试
+                            % dur_countv(iloop) = 0; %% 假装已经成功了（丢掉所有性能流（调试
+                            % Superframe_success1v(iloop) = 1; 
                             % continue;
                         end
                     end
@@ -117,10 +128,21 @@ function [sv_seq, Next_NetState, Schedule_Log] = Simulate(t_start, offline_P, of
                                         % 计算时延
                                         current_delay = (Env.T_i(flow_id) - dur_countv(flow_id)) + mod(offline_E(flow_id), Env.T_i(flow_id));
                                         delay(flow_id) = current_delay;
+                                        delay_true = t_abs - release_time(flow_id);   % 从release到成功的slot差
+                                        delay_true = t_abs - release_time(flow_id);   % 从release到成功的slot差
+                                        if ~isnan(delay_true)
+                                            % 允许误差：看你定义的“成功发生在slot末”还是“slot内”，先用0容忍
+                                            if delay_true ~= current_delay
+                                                fprintf('[CHECK-SUCCESS] flow=%d, t_rel=%d, t_succ=%d, delay_true=%d, current_delay=%d, eff_offset=%d\n', ...
+                                                    flow_id, release_time(flow_id), t_abs, delay_true, current_delay, mod(offline_E(flow_id), Env.T_i(flow_id)));
+                                            end
+                                        end
                                         dur_countv(flow_id) = 0;
                                         
                                         % 成功瞬间立即记录
                                         sv_seq{flow_id} = [sv_seq{flow_id}, current_delay];
+                                        % is_stable_flag = (current_priority_active(flow_id) == offline_P(flow_id));
+                                        % sv_seq{flow_id} = [sv_seq{flow_id}, [current_delay; is_stable_flag]];
                                     end
                                     break;
                                 end
@@ -138,4 +160,5 @@ function [sv_seq, Next_NetState, Schedule_Log] = Simulate(t_start, offline_P, of
     Next_NetState.hop_counterv = hop_counterv;
     Next_NetState.Route_dyn = Route_dyn;
     Next_NetState.current_priority_active = current_priority_active;
+    Next_NetState.release_time = release_time;
 end

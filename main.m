@@ -46,8 +46,6 @@ Env.CM_data = CM_cell_array; % 转换好的 Cell
 
 
 History_Individual_J = cell(1, Env.N);
-K = cell(1, Env.N);K{3} = K1;K{4} = K2; K{5} = K3;K{6} = K4;
-
 History_X = cell(1,Env.N);
 History_Delay = cell(1,Env.N);
 History_J_Cost = [];
@@ -62,8 +60,10 @@ offline_P = [3, 2, 1, 4, 5, 6];
 offline_T_is = [1, 1, 3, 3, 4, 2];
 offline_E = [10, 14, 45, 30, 21, 3];
 
+P_perf_perms = perms((N + 1) : (N + Control_N));
+
 %% 2. 状态初始化
-Total_Sim_Slots = 2400;
+Total_Sim_Slots = 240;
 X_real = cell(1, N);
 U_last = zeros(1, N);
 Control_Idx = (Non_control_N + 1) : N;
@@ -79,10 +79,8 @@ fprintf('开始在线滚动优化仿真...\n');
 
 for t_start = 1 : Env.Ntotal : Total_Sim_Slots
 
-    P_perf_perms = perms((N + 1) : (N + Control_N));
     best_P_perf = [];
     min_J = Inf;
-    
     % 遍历每一种优先级组合进行预测
     for p_idx = 1 : size(P_perf_perms, 1)
         current_P_try = P_perf_perms(p_idx, :);
@@ -120,6 +118,7 @@ for t_start = 1 : Env.Ntotal : Total_Sim_Slots
     
     % 执行
     [sv_seq_real, Next_NetState, Current_Log] = predict_Tc_delays(t_start, offline_P, offline_T_is, offline_E, best_P_perf, Env, Current_NetState);
+    
     Current_NetState = Next_NetState;
     Global_Schedule_History = [Global_Schedule_History; Current_Log];
 
@@ -127,10 +126,8 @@ for t_start = 1 : Env.Ntotal : Total_Sim_Slots
         History_Delay{i} = [History_Delay{i}, sv_seq_real{i}];
         for k_r = 1 : length(sv_seq_real{i})
             dk_r = sv_seq_real{i}(k_r);
-            idx_r = min(dk_r, Env.T_i(i) + 1);
-            if dk_r <= 0, idx_r = 1; end
             
-            A_cl_r = Env.CM_data{i}{idx_r};
+            A_cl_r = Env.CM_data{i}{dk_r};
             z_real = [X_real{i}; U_last(i)];
             z_next_real = A_cl_r * z_real;
             
@@ -141,7 +138,7 @@ for t_start = 1 : Env.Ntotal : Total_Sim_Slots
             History_X{i} = [History_X{i}, X_real{i}];
 
             state_cost = Env.T_i(i) * (X_real{i}' * Q_weight * X_real{i});
-            comm_penalty = Env.Route_hop(i) * Lambda_delay * dk_r;
+            comm_penalty = Lambda_delay * dk_r;
         
             step_total_J = state_cost + comm_penalty;
             History_Individual_J{i} = [History_Individual_J{i}, step_total_J];
@@ -180,7 +177,7 @@ Colors = {'r', 'b', 'k', 'm', 'g', 'c'}; % 颜色库
 % Control_Start_Idx = Env.Non_control_N + 1;
 % Control_End_Idx = Env.N;
 % 
-% for i = Control_Start_Idx : Control_End_Id
+% for i = Control_Start_Idx : Control_End_Idx
 %     idx_plot = i - Env.Non_control_N;
 %     subplot(2, 2, idx_plot);
 % 
@@ -376,7 +373,7 @@ figure('Name', '网络调度甘特图', 'Color', 'w', 'Position', [100, 100, 120
 hold on;
 
 % 为每个流分配固定颜色
-colors = lines(Env.N); 
+colors = lines(Env.N);
 
 for i = 1:size(Global_Schedule_History, 1)
     t_slot = Global_Schedule_History(i, 1);
@@ -392,6 +389,21 @@ for i = 1:size(Global_Schedule_History, 1)
     % % 在矩形上标注跳数
     text(t_slot+0.1, 0.5, num2str(h_idx), 'FontSize', 8, 'Color', 'w');
 end
+
+legendHandles = gobjects(Env.N,1);
+legendLabels  = strings(Env.N,1);
+
+for f = 1:Env.N
+    legendHandles(f) = plot(nan, nan, 's', ...
+        'MarkerFaceColor', colors(f,:), ...
+        'MarkerEdgeColor', colors(f,:), ...
+        'MarkerSize', 8);
+    legendLabels(f) = "Flow " + f;
+end
+
+lgd = legend(legendHandles, legendLabels, ...
+    'Location', 'westoutside');
+lgd.Box = 'on';
 
 % 装饰图表
 xlabel('时间(s)');

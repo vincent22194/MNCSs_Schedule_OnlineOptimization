@@ -3,10 +3,10 @@ function [Phi, G_star, G_k] = get_mats(A_i, B_i, d_i_k_slot, Ti_slot)
     T_i = Ti_slot * 0.01;
     d_i = d_i_k_slot * 0.01;
     
-    % 1. 计算系统状态转移矩阵 Y_i = e^(A_i * T_i)
+    % 计算系统状态转移矩阵 Y_i = e^(A_i * T_i)
     Phi = expm(A_i * T_i);
     
-    % 2. 定义积分函数 exp(A_i * t) * B_i
+    % 定义积分函数 exp(A_i * t) * B_i
     func = @(t) expm(A_i * t) * B_i;
 
     % 3. 根据时延是否超过周期判断分段逻辑
