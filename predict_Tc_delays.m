@@ -13,21 +13,21 @@ function [sv_seq, Next_NetState, Schedule_Log] = predict_Tc_delays(t_start, offl
         is_first_release = Prev_NetState.is_first_release;
         hop_remain = Prev_NetState.hop_remain;
         hop_counterv = Prev_NetState.hop_counterv;
-        Route_dyn = Prev_NetState.Route_dyn;
-        delay = zeros(1, Env.N); 
+        Route_dyn = Prev_NetState.Route_dyn; 
         current_priority_active = Prev_NetState.current_priority_active;
-        release_time = Prev_NetState.release_time;
+        eligible_flag = Prev_NetState.eligible_flag;
+        release_true_time = Prev_NetState.release_true_time;
     else
         % 如果是第一次运行，全零初始化
         dur_countv = zeros(1, Env.N);
         Superframe_success1v = zeros(1, Env.N);
         is_first_release = true(1, Env.N);
-        delay = zeros(1, Env.N);
         hop_remain = zeros(1, Env.N);
         hop_counterv = zeros(1, Env.N);
         Route_dyn = cell(1, Env.N);
         current_priority_active = zeros(1, Env.N);
-        release_time = nan(1, Env.N);
+        eligible_flag = zeros(1, Env.N);
+        release_true_time = zeros(1, Env.N);
     end
     
     for frame_idx = 1 : num_frames
@@ -42,64 +42,69 @@ function [sv_seq, Next_NetState, Schedule_Log] = predict_Tc_delays(t_start, offl
             
             % 任务释放逻辑
             for iloop = 1:Env.N
-                if mod(t_abs - 1 - offline_E(iloop), Env.T_i(iloop)) == 0
-                    release_time(iloop) = t_abs;
+                Ti = Env.T_i(iloop);
+                eff_offset = mod(offline_E(iloop), Ti); % 周期内 eligibility offset
+                inst_offset = floor(offline_E(iloop) / Ti); % 用于稳定/性能实例选择
+                % 周期起点 = release 时刻
+                if mod(t_abs - 1, Ti) == 0
+                    % 在真正的 release 边界结算上一包是否 miss
                     if ~is_first_release(iloop)
                         if ~Superframe_success1v(iloop)
-                            % 失败发生的“判定时刻”是当前release时刻 t_abs
-                        delay_true_fail = t_abs - release_time(iloop);
-                
-                        % 你写入的是 Ti+1（代表miss），这里检查：失败判定时刻是否已经 > Ti（按你的语义）
-                        if delay_true_fail <= Env.T_i(iloop)
-                            fprintf('[CHECK-FAIL] flow=%d, t_rel=%d, t_fail_mark=%d, delay_true_fail=%d <= Ti=%d (maybe fail marked too early)\n', ...
-                                iloop, release_time(iloop), t_abs, delay_true_fail, Env.T_i(iloop));
-                        end
-
-                            sv_seq{iloop} = [sv_seq{iloop}, Env.T_i(iloop) + 1]; 
+                            sv_seq{iloop} = [sv_seq{iloop}, Ti + 1];
                         end
                     end
                     is_first_release(iloop) = false;
-                    
-                    global_instance_idx = floor((t_abs - 1 - mod(offline_E(iloop),Env.T_i(iloop))) / Env.T_i(iloop));
-                    % global_instance_idx = floor((t_abs - 1 - offline_E(iloop)) / Env.T_i(iloop));
-
+            
+                    % 新包 release
+                    release_true_time(iloop) = t_abs;
+                    eligible_flag(iloop) = 0; % 刚 release，尚不可调度
+            
+                    Superframe_success1v(iloop) = 0;
+                    Route_dyn{iloop} = Env.Route{iloop};
+                    dur_countv(iloop) = Ti;
+                    hop_remain(iloop) = Env.Route_hop(iloop);
+                    hop_counterv(iloop) = 0;
+            
+                    % 优先级：稳定/性能实例判定
+                    global_instance_idx = floor((t_abs - 1) / Ti);
+            
                     if iloop <= Env.Non_control_N
                         current_priority_active(iloop) = offline_P(iloop);
                     else
-                        if mod(global_instance_idx, offline_T_is(iloop)) == floor(offline_E(iloop) / Env.T_i(iloop)) 
+                        if mod(global_instance_idx, offline_T_is(iloop)) == inst_offset
                             current_priority_active(iloop) = offline_P(iloop); % 稳定实例
                         else
                             perf_idx = iloop - Env.Non_control_N;
                             current_priority_active(iloop) = P_perf(perf_idx); % 性能实例
-                            % dur_countv(iloop) = 0; %% 假装已经成功了（丢掉所有性能流（调试
-                            % Superframe_success1v(iloop) = 1; 
-                            % continue;
                         end
                     end
-                    
-                    % 重置新包状态
-                    Superframe_success1v(iloop) = 0;
-                    Route_dyn{iloop} = Env.Route{iloop}; 
-                    dur_countv(iloop) = Env.T_i(iloop); 
-                    hop_remain(iloop) = Env.Route_hop(iloop);
-                    hop_counterv(iloop) = 0;
-                    delay(iloop) = 0;
+                end
+            
+                % 允许调度（release 后 eff_offset 个 slot）
+                if ~is_first_release(iloop) && mod(t_abs - 1, Ti) == eff_offset
+                    eligible_flag(iloop) = 1;
                 end
             end
+
             
             % Kill (超时截断)
             for hji = 1:Env.N
                 if dur_countv(hji) > 0 && Superframe_success1v(hji) == 0
                     dur_countv(hji) = dur_countv(hji) - 1;
-                    eff_offset = mod(offline_E(hji), Env.T_i(hji));
-                    if (Env.T_i(hji) - dur_countv(hji)) + eff_offset > Env.T_i(hji)
-                        dur_countv(hji) = 0; % 超时 Kill
+                    % 已经超过 deadline Kill
+                    % dur_countv 从 Ti 开始递减，递到 0 表示已经用完可用时间
+                    if dur_countv(hji) == 0
+                        eligible_flag(hji) = 0; % 不再可调度
+                        hop_remain(hji) = 0;
+                        hop_counterv(hji) = 0;
+                        Route_dyn{hji} = [];
                     end
                 end
             end
+
             
             % 传输调度
-            active_flows = find(dur_countv > 0 & Superframe_success1v == 0);
+            active_flows = find(dur_countv > 0 & Superframe_success1v == 0 & eligible_flag == 1);
             if ~isempty(active_flows)
                 [~, sort_idx] = sort(current_priority_active(active_flows));
                 priority_dv = active_flows(sort_idx);
@@ -124,25 +129,12 @@ function [sv_seq, Next_NetState, Schedule_Log] = predict_Tc_delays(t_start, offl
                                     if hop_remain(flow_id) == 0
                                         % 传输成功
                                         Superframe_success1v(flow_id) = 1;
-                                        
                                         % 计算时延
-                                        current_delay = (Env.T_i(flow_id) - dur_countv(flow_id)) + mod(offline_E(flow_id), Env.T_i(flow_id));
-                                        delay(flow_id) = current_delay;
-                                        delay_true = t_abs - release_time(flow_id);   % 从release到成功的slot差
-                                        delay_true = t_abs - release_time(flow_id);   % 从release到成功的slot差
-                                        if ~isnan(delay_true)
-                                            % 允许误差：看你定义的“成功发生在slot末”还是“slot内”，先用0容忍
-                                            if delay_true ~= current_delay
-                                                fprintf('[CHECK-SUCCESS] flow=%d, t_rel=%d, t_succ=%d, delay_true=%d, current_delay=%d, eff_offset=%d\n', ...
-                                                    flow_id, release_time(flow_id), t_abs, delay_true, current_delay, mod(offline_E(flow_id), Env.T_i(flow_id)));
-                                            end
-                                        end
+                                        d_true = t_abs - release_true_time(flow_id);
                                         dur_countv(flow_id) = 0;
-                                        
-                                        % 成功瞬间立即记录
-                                        sv_seq{flow_id} = [sv_seq{flow_id}, current_delay];
-                                        % is_stable_flag = (current_priority_active(flow_id) == offline_P(flow_id));
-                                        % sv_seq{flow_id} = [sv_seq{flow_id}, [current_delay; is_stable_flag]];
+                                        eligible_flag(flow_id) = 0;
+                                        % 传输完成立刻记录时延
+                                        sv_seq{flow_id} = [sv_seq{flow_id}, d_true];
                                     end
                                     break;
                                 end
@@ -160,5 +152,6 @@ function [sv_seq, Next_NetState, Schedule_Log] = predict_Tc_delays(t_start, offl
     Next_NetState.hop_counterv = hop_counterv;
     Next_NetState.Route_dyn = Route_dyn;
     Next_NetState.current_priority_active = current_priority_active;
-    Next_NetState.release_time = release_time;
+    Next_NetState.eligible_flag = eligible_flag;
+    Next_NetState.release_true_time = release_true_time;
 end
