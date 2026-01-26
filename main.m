@@ -1,8 +1,8 @@
 %% Main_Online_Rolling_Control.m
-clear;close all;clc;
+clear;
 %参数设置
 PHY_SLOT_DURATION_MS = 10; 
-Ntotal = 240;
+Ntotal = 360;
 Non_control_N = 2;
 Control_N = 4;
 N = Non_control_N + Control_N; 
@@ -45,12 +45,12 @@ Env.slot_num = slot_num;
 Env.CM_data = CM_cell_array; % 转换好的 Cell
 
 Q_weight = eye(2);
-Lambda_delay = 0;
+Lambda_delay = 0.1;
 
 % 载入离线最优配置
-offline_P = [3, 2, 1, 4, 5, 6];
+offline_P = [6, 4, 1, 5, 3, 2];
 offline_T_is = [1, 1, 3, 3, 4, 2];
-offline_E = [10, 14, 45, 30, 21, 3];
+offline_E = [0, 16,40 , 66, 1, 30];
 
 P_perf_perms = perms((N + 1) : (N + Control_N));
 
@@ -69,7 +69,7 @@ History_Priority_Matrix = [];
 Global_Schedule_History = [];
 
 for i = Control_Idx
-    X_real{i} = [10; -5];
+    X_real{i} = [10; -8];
     History_X{i} = X_real{i};
 end
 
@@ -79,11 +79,11 @@ fprintf('开始在线滚动优化仿真...\n');
 
 for t_start = 1 : Env.Ntotal : Total_Sim_Slots
 
-    if t_start == 4*Env.Ntotal +1
-        X_real{4} = X_real{4}+ [100;0];
-        Debug = debug_eval_perms_one_window(t_start, offline_P, offline_T_is, offline_E, ...
-        P_perf_perms, Env, Current_NetState, X_real, U_last, Q_weight, Lambda_delay);
-    end
+    % if t_start == 3*Env.Ntotal +1
+    %     X_real{4} = X_real{4}+ [10;0];
+    %     Debug = perf_simulator(t_start, offline_P, offline_T_is, offline_E, ...
+    %     P_perf_perms, Env, Current_NetState, X_real, U_last, Q_weight, Lambda_delay);%
+    % end
 
     best_P_perf = [];
     min_J = Inf;
@@ -136,8 +136,6 @@ for t_start = 1 : Env.Ntotal : Total_Sim_Slots
     % 执行
     [sv_seq_real, Next_NetState, Current_Log] = predict_Tc_delays(t_start, offline_P, offline_T_is, offline_E, best_P_perf, Env, Current_NetState);
     
-    Debug_new = debug_eval_perms_one_window(t_start, offline_P, offline_T_is, offline_E, ...
-        best_P_perf, Env, Current_NetState, X_real, U_last, Q_weight, Lambda_delay);
 
     Current_NetState = Next_NetState;
     Global_Schedule_History = [Global_Schedule_History; Current_Log];
@@ -293,7 +291,7 @@ sgtitle('State Trajectories over Real Time');
 
 %% 5 特定时间窗口内的逐包时延
 View_Start_Time_Sec = 0;
-View_End_Time_Sec   = 6;
+View_End_Time_Sec   = 15;
 
 Slot_Duration_Sec = PHY_SLOT_DURATION_MS / 1000;
 View_Start_Slot = round(View_Start_Time_Sec / Slot_Duration_Sec);
@@ -346,37 +344,37 @@ end
 sgtitle(['Packet Delays: ', num2str(View_Start_Time_Sec), 's - ', num2str(View_End_Time_Sec), 's']);
 
 
-%% 6 各流独立代价收敛曲线
-figure('Name', '代价收敛曲线', 'Color', 'w', 'Position', [350, 100, 800, 650]);
-
-% 定义控制流索引
-C_Start = Env.Non_control_N + 1;
-C_End = Env.N;
-
-for i = C_Start : C_End
-    subplot(2, 2, i - Env.Non_control_N);
-
-    % 准备数据
-    y_data = History_Individual_J{i};
-    if isempty(y_data), continue; end
-
-    % 计算真实物理时间轴
-    dt = Env.T_i(i) * PHY_SLOT_DURATION_MS / 1000;
-    x_time = (1:length(y_data)) * dt;
-
-    % 绘图
-    plot(x_time, y_data, 'LineWidth', 1.8, 'Color', [0.2 0.6 0.4]);
-    grid on; hold on;
-
-    % 格式化
-    title(['Loop ', num2str(i-Non_control_N), ' Total Cost']);
-    xlabel('Real Time (s)');
-    ylabel('Cost value (Log Scale)');
-
-    ylim([min(y_data(y_data>0))*0.8, max(y_data)*1.5]);
-end
-
-sgtitle('收敛曲线', 'FontSize', 14);
+% %% 6 各流独立代价收敛曲线
+% figure('Name', '代价收敛曲线', 'Color', 'w', 'Position', [350, 100, 800, 650]);
+% 
+% % 定义控制流索引
+% C_Start = Env.Non_control_N + 1;
+% C_End = Env.N;
+% 
+% for i = C_Start : C_End
+%     subplot(2, 2, i - Env.Non_control_N);
+% 
+%     % 准备数据
+%     y_data = History_Individual_J{i};
+%     if isempty(y_data), continue; end
+% 
+%     % 计算真实物理时间轴
+%     dt = Env.T_i(i) * PHY_SLOT_DURATION_MS / 1000;
+%     x_time = (1:length(y_data)) * dt;
+% 
+%     % 绘图
+%     plot(x_time, y_data, 'LineWidth', 1.8, 'Color', [0.2 0.6 0.4]);
+%     grid on; hold on;
+% 
+%     % 格式化
+%     title(['Loop ', num2str(i-Non_control_N), ' Total Cost']);
+%     xlabel('Real Time (s)');
+%     ylabel('Cost value (Log Scale)');
+% 
+%     ylim([min(y_data(y_data>0))*0.8, max(y_data)*1.5]);
+% end
+% 
+% sgtitle('收敛曲线', 'FontSize', 14);
 
 % %% 7 仿真结束后绘制甘特图
 % figure('Name', '网络调度甘特图', 'Color', 'w', 'Position', [100, 100, 1200, 100]);

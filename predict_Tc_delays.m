@@ -44,7 +44,7 @@ function [sv_seq, Next_NetState, Schedule_Log] = predict_Tc_delays(t_start, offl
             % 任务释放逻辑
             for iloop = 1:Env.N
                 Ti = Env.T_i(iloop);
-
+                global_instance_idx = floor((t_abs - 1) / Ti);
                 eff_offset = mod(offline_E(iloop), Ti);% 作用1：偏移
                 inst_offset = floor(offline_E(iloop) / Ti);% 作用2：选择第几个为稳定实例
                 % 周期起点为release 时刻
@@ -67,7 +67,6 @@ function [sv_seq, Next_NetState, Schedule_Log] = predict_Tc_delays(t_start, offl
                     hop_counterv(iloop) = 0;
             
                     % 优先级：稳定/性能实例判定
-                    global_instance_idx = floor((t_abs - 1) / Ti);
             
                     if iloop <= Env.Non_control_N
                         current_priority_active(iloop) = offline_P(iloop);
@@ -87,10 +86,13 @@ function [sv_seq, Next_NetState, Schedule_Log] = predict_Tc_delays(t_start, offl
                         end
                     end
                 end
-            
+               
                 % release 后 eff_offset 个 slot允许调度
-                if ~is_first_release(iloop) && mod(t_abs - 1, Ti) == eff_offset
+                if  mod(t_abs - 1, Ti) == eff_offset
                     eligible_flag(iloop) = 1;
+                    % if iloop > Env.Non_control_N && mod(global_instance_idx, offline_T_is(iloop)) ~= inst_offset
+                    %     eligible_flag(iloop) = 0;
+                    % end % 用以检查让性能流全部超时之后，是否控制性能会变差
                 end
             end
 

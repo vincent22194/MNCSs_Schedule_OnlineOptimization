@@ -1,22 +1,21 @@
-function Debug = debug_simulator(t_start, offline_P, offline_T_is, offline_E, P_perf_perms, Env, Current_NetState, X_real, U_last, Q_weight, Lambda_delay)
-% 返回 Debug 结构体：包含 24种perm 的总代价、流代价、delay
+function Debug = perf_simulator(t_start, offline_P, offline_T_is, offline_E, P_perf_perms, Env, Current_NetState, X_real, U_last, Q_weight, Lambda_delay)
+
 Control_Idx = (Env.Non_control_N + 1) : Env.N;
 Control_N = Env.Control_N;
 
 num_perm = size(P_perf_perms, 1);
 
+DelaySeq_per_flow = cell(num_perm, Control_N);
 J_total = zeros(num_perm, 1);
-J_per_flow = zeros(num_perm, Control_N); % 每行对应一个perm，每列对应一个控制流
+J_per_flow = zeros(num_perm, Control_N);
 DelayLen_per_flow = zeros(num_perm, Control_N);
-First5Delay = cell(num_perm, Control_N);
 PermMat = P_perf_perms;
 
 for p_idx = 1:num_perm
     P_perf = P_perf_perms(p_idx, :);
 
-    % 每个perm都用同一个 NetState初始条件
     [sv_seq_pred, ~, ~] = predict_Tc_delays(t_start, offline_P, offline_T_is, offline_E, P_perf, Env, Current_NetState);
-
+    
     Ji_vec = zeros(1, Control_N);
 
     for ii = 1:Control_N
@@ -37,8 +36,8 @@ for p_idx = 1:num_perm
         end
 
         DelayLen_per_flow(p_idx, ii) = length(sv_seq_pred{i});
-        d = sv_seq_pred{i};
-        First5Delay{p_idx, ii} = d(1:min(5,end));
+        DelaySeq_per_flow{p_idx, ii} = sv_seq_pred{i};
+
     end
 
     J_per_flow(p_idx, :) = Ji_vec;
@@ -48,8 +47,10 @@ end
 T = table((1:num_perm)', PermMat, J_total, ...
           J_per_flow(:,1), J_per_flow(:,2), J_per_flow(:,3), J_per_flow(:,4), ...
           DelayLen_per_flow(:,1), DelayLen_per_flow(:,2), DelayLen_per_flow(:,3), DelayLen_per_flow(:,4), ...
+          DelaySeq_per_flow(:,1), DelaySeq_per_flow(:,2), DelaySeq_per_flow(:,3), DelaySeq_per_flow(:,4), ...
           'VariableNames', {'perm_id','P_perf','J_total','J_loop1','J_loop2','J_loop3','J_loop4', ...
-                            'len_loop1','len_loop2','len_loop3','len_loop4'});
+                            'len_loop1','len_loop2','len_loop3','len_loop4', ...
+                            'delay_loop1','delay_loop2','delay_loop3','delay_loop4'});
 
 T_sorted = sortrows(T, 'J_total', 'ascend');
 
